@@ -1,91 +1,64 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests
+from transformers import pipeline
+from huggingface_hub import login
 import os
 
 app = Flask(__name__)
-CORS(app)  # Allow cross-origin requests
+CORS(app)
 
-# Your Hugging Face API token (from environment variable - set this in Render.com)
+# Login with your Hugging Face token
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
-MODEL_URL = "https://api-inference.huggingface.co/models/totoro2211/sms-smishing-distilbert"
+if HF_TOKEN:
+    login(token=HF_TOKEN)
+    print("Logged in to Hugging Face!")
+
+print("Loading model... this may take a minute...")
+try:
+    # Load your model using pipeline (exactly like your screenshot!)
+    classifier = pipeline("text-classification", model="totoro2211/sms-smishing-distilbert")
+    print("Model loaded successfully!")
+except Exception as e:
+    print(f"Error loading model: {e}")
+    classifier = None
+
+@app.route('/', methods=['GET'])
+def home():
+    return jsonify({
+        "status": "SMS Classifier API is running!", 
+        "model_loaded": classifier is not None
+    })
 
 @app.route('/classify', methods=['POST'])
-def classify_sms():
-    """
-    Endpoint to classify SMS messages
-    Expects JSON: {"text": "message to classify"}
-    Returns: {"label": "SPAM" or "SAFE", "confidence": 0.95}
-    """
+def classify():
     try:
-        # Get the text from request
+        if classifier is None:
+            return jsonify({"error": "Model not loaded"}), 500
+        
         data = request.get_json()
         text = data.get('text', '')
         
         if not text:
             return jsonify({"error": "No text provided"}), 400
         
-        # Call Hugging Face API
-        headers = {
-            "Authorization": f"Bearer {HF_TOKEN}",
-            "Content-Type": "application/json"
-        }
+        # Use the classifier (just like your screenshot!)
+        result = classifier(text)
         
-        payload = {
-            "inputs": text,
-            "options": {"wait_for_model": True}
-        }
+        # Result format: [{'label': 'LABEL_0', 'score': 0.95}]
+        prediction = result[0]
+        label_num = prediction['label']
+        confidence = prediction['score']
         
-        response = requests.post(MODEL_URL, headers=headers, json=payload, timeout=30)
+        # Map LABEL_0/LABEL_1 to SAFE/SPAM
+        label = "SPAM" if label_num == "LABEL_1" else "SAFE"
         
-        if response.status_code == 200:
-            result = response.json()
-            
-            # Parse the response
-            if isinstance(result, list) and len(result) > 0:
-                predictions = result[0]
-                
-                # Find SPAM and SAFE scores
-                spam_score = 0.0
-                safe_score = 0.0
-                
-                for pred in predictions:
-                    label = pred.get('label', '')
-                    score = pred.get('score', 0.0)
-                    
-                    if label in ['LABEL_1', 'spam', 'SPAM']:
-                        spam_score = score
-                    elif label in ['LABEL_0', 'safe', 'SAFE']:
-                        safe_score = score
-                
-                # Determine final classification
-                if spam_score > safe_score:
-                    return jsonify({
-                        "label": "SPAM",
-                        "confidence": spam_score
-                    })
-                else:
-                    return jsonify({
-                        "label": "SAFE",
-                        "confidence": safe_score
-                    })
-            
-            return jsonify({"error": "Unexpected response format"}), 500
-        
-        else:
-            return jsonify({
-                "error": f"HuggingFace API error: {response.status_code}",
-                "details": response.text
-            }), 500
+        return jsonify({
+            "label": label,
+            "confidence": float(confidence)
+        })
     
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/health', methods=['GET'])
-def health():
-    """Health check endpoint"""
-    return jsonify({"status": "healthy", "service": "SMS Classifier API"})
-
 if __name__ == '__main__':
-    # Run on all interfaces so it's accessible from your phone
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=8000)
